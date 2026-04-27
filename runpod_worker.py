@@ -1,5 +1,3 @@
-"""runpod_worker.py - Ensamblador de video interno en RunPod."""
-
 import os
 import sys
 import json
@@ -7,7 +5,7 @@ import subprocess
 import boto3
 from pathlib import Path
 
-# Configuración AWS (Usará las credenciales del entorno)
+# Configuración AWS
 AWS_BUCKET = "mis-imagenes-flux-runpod"
 s3 = boto3.client('s3')
 
@@ -18,9 +16,11 @@ DIR_TEMP = WORKSPACE / "temp_ensamblaje"
 DIR_TEMP.mkdir(exist_ok=True)
 
 ANCHO, ALTO = 1080, 1920
+# Recibe el volumen desde la variable de entorno inyectada por SSH, por defecto 0.08
+VOLUMEN_FONDO = os.environ.get("VOLUMEN_FONDO", "0.08")
 
 def descargar_inputs_s3(tema_slug: str):
-    """Descarga el Master JSON, MP3 y ASS desde S3."""
+    """Descarga el Master JSON, MP3, ASS y el Audio de Fondo desde S3."""
     archivos =[
         f"inputs/MASTER_{tema_slug}.json",
         f"inputs/{tema_slug}_MAESTRO.mp3",
@@ -31,6 +31,14 @@ def descargar_inputs_s3(tema_slug: str):
         ruta_local = DIR_TEMP / nombre_archivo
         print(f"📥 Descargando {nombre_archivo} de S3...")
         s3.download_file(AWS_BUCKET, key, str(ruta_local))
+        
+    # Intentar descargar el audio de fondo (si existe)
+    try:
+        s3.download_file(AWS_BUCKET, "inputs/background_audio.mp3", str(DIR_TEMP / "background_audio.mp3"))
+        print("📥 Audio de fondo descargado.")
+    except Exception:
+        pass # Si no hay audio de fondo, no pasa nada
+
     return DIR_TEMP / f"MASTER_{tema_slug}.json"
 
 def obtener_filtro_camara(efecto: str, duracion: float) -> str:
@@ -53,7 +61,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         master_data = json.load(f)
     
     fps = master_data["fps_objetivo"]
-    clips = []
+    clips =[]
     
     for escena in master_data["escenas"]:
         id_escena = escena["id"]
@@ -61,7 +69,6 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         
         imagenes = sorted(list(carpeta_frames.glob("*.png")))
         if len(imagenes) < 2:
-            print(f"⚠️ Faltan frames en escena {id_escena}")
             continue
 
         ruta_secuencia = DIR_TEMP / f"secuencia_{id_escena:02d}.txt"
@@ -87,21 +94,43 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     video_final = DIR_TEMP / f"{tema_slug}_FINAL.mp4"
     audio_maestro = DIR_TEMP / f"{tema_slug}_MAESTRO.mp3"
     ruta_ass = str(DIR_TEMP / f"{tema_slug}_MAESTRO.ass").replace('\\', '/').replace(':', '\\:')
+    ruta_fondo = DIR_TEMP / "background_audio.mp3"
     
-    cmd_final =[
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lista_final),
-        "-i", str(audio_maestro), "-vf", f"ass='{ruta_ass}'",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18", 
-        "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
-    ]
+    filtro_voz = "loudnorm=I=-14:LRA=11:TP=-1.5"
+    
     print(f"🎬 Renderizando video final con FFmpeg...")
-    subprocess.run(cmd_final)
     
+    # Si existe audio de fondo, mezclamos. Si no, solo normalizamos la voz.
+    if ruta_fondo.exists():
+        cmd_final =[
+            "ffmpeg", "-y", 
+            "-f", "concat", "-safe", "0", "-i", str(lista_final), 
+            "-i", str(audio_maestro),                             
+            "-stream_loop", "-1", "-i", str(ruta_fondo),               
+            "-filter_complex", 
+            f"[1:a]{filtro_voz}[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
+            "-vf", f"ass='{ruta_ass}'",
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", 
+            "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
+        ]
+    else:
+        cmd_final =[
+            "ffmpeg", "-y", 
+            "-f", "concat", "-safe", "0", "-i", str(lista_final), 
+            "-i", str(audio_maestro),
+            "-af", filtro_voz,
+            "-vf", f"ass='{ruta_ass}'",
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", 
+            "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
+        ]
+        
+    subprocess.run(cmd_final)
     return video_final
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python runpod_worker.py <tema_slug>")
         sys.exit(1)
         
     tema_slug = sys.argv[1]
@@ -113,7 +142,6 @@ def main():
     print(f"☁️ Subiendo {video_final.name} a S3...")
     s3.upload_file(str(video_final), AWS_BUCKET, f"outputs/{video_final.name}")
     
-    # Limpieza opcional para ahorrar espacio en el Pod
     os.system(f"rm -rf {DIR_OUTPUT_COMFY}/{tema_slug}")
     print("✅ ¡Proceso completado con éxito!")
 
