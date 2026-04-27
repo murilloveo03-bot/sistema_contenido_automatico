@@ -37,18 +37,22 @@ def descargar_inputs_s3(tema_slug: str):
         s3.download_file(AWS_BUCKET, "inputs/background_audio.mp3", str(DIR_TEMP / "background_audio.mp3"))
         print("📥 Audio de fondo descargado.")
     except Exception:
-        pass # Si no hay audio de fondo, no pasa nada
+        pass
 
     return DIR_TEMP / f"MASTER_{tema_slug}.json"
 
 def obtener_filtro_camara(efecto: str, duracion: float) -> str:
     if not efecto or efecto == "static": return ""
-    total_f = duracion * 30
+    
+    # FIX IMPORTADO DEL LOCAL: Evitar duraciones inválidas
+    dur = max(float(duracion), 0.1)
+    total_f = dur * 30
+    
     filtros = {
-        "pan_right": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/{duracion}*t':'(ih-oh)/2'",
-        "pan_left": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)-(iw-ow)/{duracion}*t':'(ih-oh)/2'",
-        "tilt_up": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)-(ih-oh)/{duracion}*t'",
-        "tilt_down": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)/{duracion}*t'",
+        "pan_right": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/{dur}*t':'(ih-oh)/2'",
+        "pan_left": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)-(iw-ow)/{dur}*t':'(ih-oh)/2'",
+        "tilt_up": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)-(ih-oh)/{dur}*t'",
+        "tilt_down": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)/{dur}*t'",
         "zoom_in": f"fps=30,zoompan=z='1+0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
         "zoom_out": f"fps=30,zoompan=z='1.15-0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
         "slow_zoom_in": f"fps=30,zoompan=z='1+0.08*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
@@ -60,8 +64,8 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     with open(ruta_master, "r", encoding="utf-8") as f:
         master_data = json.load(f)
     
-    fps = master_data["fps_objetivo"]
-    clips =[]
+    fps = master_data.get("fps_objetivo", 6)
+    clips = []
     
     for escena in master_data["escenas"]:
         id_escena = escena["id"]
@@ -82,8 +86,14 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         filtro = obtener_filtro_camara(escena["efecto_camara"], escena["frames_totales"]/fps)
         vf_chain = f"{filtro},fps=30,format=yuv420p" if filtro else "fps=30,format=yuv420p"
         
-        cmd =["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
-               "-vf", vf_chain, "-c:v", "libx264", "-pix_fmt", "yuv420p", str(salida_clip)]
+        # FIX IMPORTADO DEL LOCAL: Añadido -video_track_timescale y -r 30
+        cmd =[
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
+            "-vf", vf_chain, 
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", 
+            "-video_track_timescale", "90000", "-r", "30",
+            str(salida_clip)
+        ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         clips.append(salida_clip)
 
@@ -100,7 +110,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     
     print(f"🎬 Renderizando video final con FFmpeg...")
     
-    # Si existe audio de fondo, mezclamos. Si no, solo normalizamos la voz.
+    # FIX IMPORTADO DEL LOCAL: Se añaden -r 30 y -pix_fmt yuv420p en el render final
     if ruta_fondo.exists():
         cmd_final =[
             "ffmpeg", "-y", 
@@ -111,7 +121,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             f"[1:a]{filtro_voz}[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
             "-vf", f"ass='{ruta_ass}'",
             "-map", "0:v", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", 
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-r", "30", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
     else:
@@ -122,7 +132,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-af", filtro_voz,
             "-vf", f"ass='{ruta_ass}'",
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", 
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-r", "30", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
         
