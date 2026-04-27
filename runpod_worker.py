@@ -17,7 +17,7 @@ DIR_OUTPUT_COMFY = WORKSPACE / "runpod-slim/ComfyUI/output"
 DIR_TEMP = WORKSPACE / "temp_ensamblaje"
 DIR_TEMP.mkdir(exist_ok=True)
 
-ANCHO, ALTO = 1920, 1080
+ANCHO, ALTO = 1080, 1920
 
 def descargar_inputs_s3(tema_slug: str):
     """Descarga el Master JSON, MP3 y ASS desde S3."""
