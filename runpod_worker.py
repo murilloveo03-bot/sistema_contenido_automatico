@@ -16,11 +16,9 @@ DIR_TEMP = WORKSPACE / "temp_ensamblaje"
 DIR_TEMP.mkdir(exist_ok=True)
 
 ANCHO, ALTO = 1080, 1920
-# Recibe el volumen desde la variable de entorno inyectada por SSH, por defecto 0.08
 VOLUMEN_FONDO = os.environ.get("VOLUMEN_FONDO", "0.08")
 
 def descargar_inputs_s3(tema_slug: str):
-    """Descarga el Master JSON, MP3, ASS y el Audio de Fondo desde S3."""
     archivos =[
         f"inputs/MASTER_{tema_slug}.json",
         f"inputs/{tema_slug}_MAESTRO.mp3",
@@ -32,9 +30,8 @@ def descargar_inputs_s3(tema_slug: str):
         print(f"📥 Descargando {nombre_archivo} de S3...")
         s3.download_file(AWS_BUCKET, key, str(ruta_local))
         
-    # Intentar descargar el audio de fondo (si existe)
     try:
-        s3.download_file(AWS_BUCKET, "inputs/background_audio.mp3", str(DIR_TEMP / "background_audio.mp3"))
+        s3.download_file(AWS_BUCKET, "inputs/background_audio.wav", str(DIR_TEMP / "background_audio.wav"))
         print("📥 Audio de fondo descargado.")
     except Exception:
         pass
@@ -42,23 +39,26 @@ def descargar_inputs_s3(tema_slug: str):
     return DIR_TEMP / f"MASTER_{tema_slug}.json"
 
 def obtener_filtro_camara(efecto: str, duracion: float) -> str:
-    if not efecto or efecto == "static": return ""
+    # EL BLINDAJE: Esto fuerza a que todo clip cuadre perfecto, tenga efecto o no.
+    base_fix = f"scale={ANCHO}:{ALTO},setsar=1"
     
-    # FIX IMPORTADO DEL LOCAL: Evitar duraciones inválidas
+    if not efecto or efecto == "static": 
+        return base_fix
+    
     dur = max(float(duracion), 0.1)
     total_f = dur * 30
     
     filtros = {
-        "pan_right": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/{dur}*t':'(ih-oh)/2'",
-        "pan_left": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)-(iw-ow)/{dur}*t':'(ih-oh)/2'",
-        "tilt_up": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)-(ih-oh)/{dur}*t'",
-        "tilt_down": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)/{dur}*t'",
-        "zoom_in": f"fps=30,zoompan=z='1+0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
-        "zoom_out": f"fps=30,zoompan=z='1.15-0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
-        "slow_zoom_in": f"fps=30,zoompan=z='1+0.08*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30",
-        "slow_zoom_out": f"fps=30,zoompan=z='1.08-0.08*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30"
+        "pan_right": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/{dur}*t':'(ih-oh)/2',{base_fix}",
+        "pan_left": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)-(iw-ow)/{dur}*t':'(ih-oh)/2',{base_fix}",
+        "tilt_up": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)-(ih-oh)/{dur}*t',{base_fix}",
+        "tilt_down": f"fps=30,scale={int(ANCHO*1.15)}:{int(ALTO*1.15)},crop={ANCHO}:{ALTO}:'(iw-ow)/2':'(ih-oh)/{dur}*t',{base_fix}",
+        "zoom_in": f"fps=30,zoompan=z='1+0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30,{base_fix}",
+        "zoom_out": f"fps=30,zoompan=z='1.15-0.15*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30,{base_fix}",
+        "slow_zoom_in": f"fps=30,zoompan=z='1+0.08*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30,{base_fix}",
+        "slow_zoom_out": f"fps=30,zoompan=z='1.08-0.08*(on/{total_f})':x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':d=1:s={ANCHO}x{ALTO}:fps=30,{base_fix}"
     }
-    return filtros.get(efecto, "")
+    return filtros.get(efecto, base_fix)
 
 def ensamblar_video(tema_slug: str, ruta_master: Path):
     with open(ruta_master, "r", encoding="utf-8") as f:
@@ -84,9 +84,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
 
         salida_clip = DIR_TEMP / f"clip_{id_escena:02d}.mp4"
         filtro = obtener_filtro_camara(escena["efecto_camara"], escena["frames_totales"]/fps)
-        vf_chain = f"{filtro},fps=30,format=yuv420p" if filtro else "fps=30,format=yuv420p"
         
-        # FIX IMPORTADO DEL LOCAL: Añadido -video_track_timescale y -r 30
+        # El filtro ya está blindado, solo añadimos fps de salida y formato de píxel
+        vf_chain = f"{filtro},fps=30,format=yuv420p"
+        
         cmd =[
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
             "-vf", vf_chain, 
@@ -94,8 +95,13 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-video_track_timescale", "90000", "-r", "30",
             str(salida_clip)
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        clips.append(salida_clip)
+        
+        # Ejecutamos asegurándonos de que si algo falla silenciosamente, al menos lo veamos si revisamos logs
+        subprocess.run(cmd, stderr=subprocess.STDOUT)
+        
+        # Solo añadimos el clip a la lista final si realmente se generó y no está vacío
+        if salida_clip.exists() and salida_clip.stat().st_size > 1000:
+            clips.append(salida_clip)
 
     lista_final = DIR_TEMP / "lista_final.txt"
     with open(lista_final, "w") as f:
@@ -104,13 +110,12 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     video_final = DIR_TEMP / f"{tema_slug}_FINAL.mp4"
     audio_maestro = DIR_TEMP / f"{tema_slug}_MAESTRO.mp3"
     ruta_ass = str(DIR_TEMP / f"{tema_slug}_MAESTRO.ass").replace('\\', '/').replace(':', '\\:')
-    ruta_fondo = DIR_TEMP / "background_audio.mp3"
+    ruta_fondo = DIR_TEMP / "background_audio.wav"
     
     filtro_voz = "loudnorm=I=-14:LRA=11:TP=-1.5"
     
     print(f"🎬 Renderizando video final con FFmpeg...")
     
-    # FIX IMPORTADO DEL LOCAL: Se añaden -r 30 y -pix_fmt yuv420p en el render final
     if ruta_fondo.exists():
         cmd_final =[
             "ffmpeg", "-y", 
@@ -149,11 +154,14 @@ def main():
     ruta_master = descargar_inputs_s3(tema_slug)
     video_final = ensamblar_video(tema_slug, ruta_master)
     
-    print(f"☁️ Subiendo {video_final.name} a S3...")
-    s3.upload_file(str(video_final), AWS_BUCKET, f"outputs/{video_final.name}")
-    
+    if video_final.exists() and video_final.stat().st_size > 0:
+        print(f"☁️ Subiendo {video_final.name} a S3...")
+        s3.upload_file(str(video_final), AWS_BUCKET, f"outputs/{video_final.name}")
+        print("✅ ¡Proceso completado con éxito!")
+    else:
+        print("❌ Error fatal: El archivo final no se generó correctamente.")
+        
     os.system(f"rm -rf {DIR_OUTPUT_COMFY}/{tema_slug}")
-    print("✅ ¡Proceso completado con éxito!")
 
 if __name__ == "__main__":
     main()
