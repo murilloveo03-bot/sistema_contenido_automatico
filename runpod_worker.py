@@ -31,7 +31,7 @@ def descargar_inputs_s3(tema_slug: str):
         s3.download_file(AWS_BUCKET, key, str(ruta_local))
         
     try:
-        s3.download_file(AWS_BUCKET, "inputs/background_audio.wav", str(DIR_TEMP / "background_audio.wav"))
+        s3.download_file(AWS_BUCKET, "inputs/background_audio.mp3", str(DIR_TEMP / "background_audio.mp3"))
         print("📥 Audio de fondo descargado.")
     except Exception:
         pass
@@ -110,7 +110,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     video_final = DIR_TEMP / f"{tema_slug}_FINAL.mp4"
     audio_maestro = DIR_TEMP / f"{tema_slug}_MAESTRO.mp3"
     ruta_ass = str(DIR_TEMP / f"{tema_slug}_MAESTRO.ass").replace('\\', '/').replace(':', '\\:')
-    ruta_fondo = DIR_TEMP / "background_audio.wav"
+    ruta_fondo = DIR_TEMP / "background_audio.mp3"
     
     filtro_voz = "loudnorm=I=-14:LRA=11:TP=-1.5"
     
