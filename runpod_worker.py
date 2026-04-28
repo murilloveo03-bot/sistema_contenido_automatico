@@ -15,8 +15,9 @@ DIR_OUTPUT_COMFY = WORKSPACE / "runpod-slim/ComfyUI/output"
 DIR_TEMP = WORKSPACE / "temp_ensamblaje"
 DIR_TEMP.mkdir(exist_ok=True)
 
-ANCHO, ALTO = 1080, 1920
-VOLUMEN_FONDO = os.environ.get("VOLUMEN_FONDO", "0.08")
+#ANCHO, ALTO = 1080, 1920
+ANCHO, ALTO = 1440, 2560
+VOLUMEN_FONDO = os.environ.get("VOLUMEN_FONDO", "1.0")
 
 def descargar_inputs_s3(tema_slug: str):
     archivos =[
@@ -88,14 +89,24 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         # El filtro ya está blindado, solo añadimos fps de salida y formato de píxel
         vf_chain = f"{filtro},fps=30,format=yuv420p"
         
+        #cmd =[
+         #   "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
+          #  "-vf", vf_chain, 
+           # "-c:v", "libx264", "-pix_fmt", "yuv420p", 
+            #"-video_track_timescale", "90000", "-r", "30",
+            #str(salida_clip)
+        #]
         cmd =[
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
             "-vf", vf_chain, 
             "-c:v", "libx264", "-pix_fmt", "yuv420p", 
             "-video_track_timescale", "90000", "-r", "30",
+            "-threads", "4",  # <-- ESTA ES LA MAGIA (Limita la CPU)
             str(salida_clip)
         ]
         
+
+
         # Ejecutamos asegurándonos de que si algo falla silenciosamente, al menos lo veamos si revisamos logs
         subprocess.run(cmd, stderr=subprocess.STDOUT)
         
@@ -114,7 +125,13 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     
     filtro_voz = "loudnorm=I=-14:LRA=11:TP=-1.5"
     
-    print(f"🎬 Renderizando video final con FFmpeg...")
+    # === LA MAGIA ANTI-COMPRESIÓN ===
+    # 1. ass: Aplica tus subtítulos
+    # 2. eq: Levanta el brillo general un 1.5% para matar el negro #000000 puro
+    # 3. noise: Agrega ruido/grano temporal suave (alls=2) para engañar al algoritmo
+    vf_final = f"ass='{ruta_ass}',eq=brightness=0.015,noise=alls=2:allf=t"
+    
+    print(f"🎬 Renderizando video final con FFmpeg (Calidad Anti-Compresión)...")
     
     if ruta_fondo.exists():
         cmd_final =[
@@ -124,9 +141,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-stream_loop", "-1", "-i", str(ruta_fondo),               
             "-filter_complex", 
             f"[1:a]{filtro_voz}[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
-            "-vf", f"ass='{ruta_ass}'",
+            "-vf", vf_final, # <-- Inyectamos los filtros visuales aquí
             "-map", "0:v", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-r", "30", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
+            "-threads", "6", # <-- REPITES LA MAGIA AQUÍ
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
     else:
@@ -135,9 +153,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-f", "concat", "-safe", "0", "-i", str(lista_final), 
             "-i", str(audio_maestro),
             "-af", filtro_voz,
-            "-vf", f"ass='{ruta_ass}'",
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-r", "30", "-pix_fmt", "yuv420p",
+            "-vf", vf_final, # <-- Inyectamos los filtros visuales aquí
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
+            "-threads", "6", # <-- REPITES LA MAGIA AQUÍ
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
         
