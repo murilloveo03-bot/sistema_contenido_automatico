@@ -84,7 +84,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         # Si es la última, le sumamos 10 segundos extra de frames (10 * fps)
         frames_a_renderizar = escena["frames_totales"]
         if es_ultima_escena:
-            frames_a_renderizar += int(fps * 10)
+            frames_a_renderizar += int(fps)
             print(f"   ⏳ Añadiendo búfer de animación a la última escena ({frames_a_renderizar} frames en total).")
 
         with open(ruta_secuencia, "w") as f:
