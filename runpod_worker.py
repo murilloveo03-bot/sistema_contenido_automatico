@@ -140,7 +140,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-vf", vf_final,
             "-map", "0:v", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
-            "-threads", "6", 
+            "-threads", "10", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
     else:
@@ -153,7 +153,7 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-vf", vf_final, 
             "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
-            "-threads", "6", 
+            "-threads", "10", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
         
