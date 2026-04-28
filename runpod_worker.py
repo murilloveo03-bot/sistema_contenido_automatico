@@ -77,11 +77,22 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             continue
 
         ruta_secuencia = DIR_TEMP / f"secuencia_{id_escena:02d}.txt"
+        
+        # Detectamos si es la última escena del JSON
+        es_ultima_escena = (escena == master_data["escenas"][-1])
+        
+        # Si es la última, le sumamos 10 segundos extra de frames (10 * fps)
+        frames_a_renderizar = escena["frames_totales"]
+        if es_ultima_escena:
+            frames_a_renderizar += int(fps * 10)
+            print(f"   ⏳ Añadiendo búfer de animación a la última escena ({frames_a_renderizar} frames en total).")
+
         with open(ruta_secuencia, "w") as f:
-            for i in range(escena["frames_totales"]):
+            for i in range(frames_a_renderizar):
                 f.write(f"file '{imagenes[i % 2].as_posix()}'\n")
                 f.write(f"duration {1.0/fps:.5f}\n")
-            f.write(f"file '{imagenes[(escena['frames_totales'] - 1) % 2].as_posix()}'\n")
+            # Escribimos el último frame sin duración (requerido por FFmpeg)
+            f.write(f"file '{imagenes[(frames_a_renderizar - 1) % 2].as_posix()}'\n")
 
         salida_clip = DIR_TEMP / f"clip_{id_escena:02d}.mp4"
         filtro = obtener_filtro_camara(escena["efecto_camara"], escena["frames_totales"]/fps)
@@ -113,11 +124,6 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
     ruta_fondo = DIR_TEMP / "background_audio.mp3"
     
     filtro_voz = "loudnorm=I=-14:LRA=11:TP=-1.5"
-    
-    # === LA MAGIA ANTI-COMPRESIÓN ===
-    # 1. ass: Aplica tus subtítulos
-    # 2. eq: Levanta el brillo general un 1.5% para matar el negro #000000 puro
-    # 3. noise: Agrega ruido/grano temporal suave (alls=2) para engañar al algoritmo
     vf_final = f"ass='{ruta_ass}',eq=brightness=0.015,noise=alls=2:allf=t"
     
     print(f"🎬 Renderizando video final con FFmpeg (Calidad Anti-Compresión)...")
@@ -129,9 +135,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-i", str(audio_maestro),                             
             "-stream_loop", "-1", "-i", str(ruta_fondo),               
             "-filter_complex", 
-            f"[1:a]{filtro_voz}[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
+            # AQUÍ ESTÁ LA MAGIA: Añadimos apad=pad_dur=1 para dar 1 segundo de silencio al final de la voz
+            f"[1:a]{filtro_voz},apad=pad_dur=1[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
             "-vf", vf_final,
-            "-map", "0:v", "-map", "[aout]", # <-- Aquí sí existe [aout]
+            "-map", "0:v", "-map", "[aout]",
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
             "-threads", "6", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
@@ -141,9 +148,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "ffmpeg", "-y", 
             "-f", "concat", "-safe", "0", "-i", str(lista_final), 
             "-i", str(audio_maestro),
-            "-af", filtro_voz,
+            # AQUÍ ESTÁ LA MAGIA para cuando no hay música de fondo
+            "-af", f"{filtro_voz},apad=pad_dur=1",
             "-vf", vf_final, 
-            "-map", "0:v", "-map", "1:a", # <-- ¡CORRECCIÓN! Mapeamos el audio original procesado
+            "-map", "0:v", "-map", "1:a",
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
             "-threads", "6", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
