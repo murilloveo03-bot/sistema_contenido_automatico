@@ -89,25 +89,14 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
         # El filtro ya está blindado, solo añadimos fps de salida y formato de píxel
         vf_chain = f"{filtro},fps=30,format=yuv420p"
         
-        #cmd =[
-         #   "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
-          #  "-vf", vf_chain, 
-           # "-c:v", "libx264", "-pix_fmt", "yuv420p", 
-            #"-video_track_timescale", "90000", "-r", "30",
-            #str(salida_clip)
-        #]
         cmd =[
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(ruta_secuencia),
             "-vf", vf_chain, 
             "-c:v", "libx264", "-pix_fmt", "yuv420p", 
             "-video_track_timescale", "90000", "-r", "30",
-            "-threads", "4",  # <-- ESTA ES LA MAGIA (Limita la CPU)
+            "-threads", "4",
             str(salida_clip)
         ]
-        
-
-
-        # Ejecutamos asegurándonos de que si algo falla silenciosamente, al menos lo veamos si revisamos logs
         subprocess.run(cmd, stderr=subprocess.STDOUT)
         
         # Solo añadimos el clip a la lista final si realmente se generó y no está vacío
@@ -141,10 +130,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-stream_loop", "-1", "-i", str(ruta_fondo),               
             "-filter_complex", 
             f"[1:a]{filtro_voz}[voice];[2:a]volume={VOLUMEN_FONDO}[bg];[voice][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]",
-            "-vf", vf_final, # <-- Inyectamos los filtros visuales aquí
-            "-map", "0:v", "-map", "[aout]",
+            "-vf", vf_final,
+            "-map", "0:v", "-map", "[aout]", # <-- Aquí sí existe [aout]
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
-            "-threads", "6", # <-- REPITES LA MAGIA AQUÍ
+            "-threads", "6", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
     else:
@@ -153,10 +142,10 @@ def ensamblar_video(tema_slug: str, ruta_master: Path):
             "-f", "concat", "-safe", "0", "-i", str(lista_final), 
             "-i", str(audio_maestro),
             "-af", filtro_voz,
-            "-vf", vf_final, # <-- Inyectamos los filtros visuales aquí
-            "-map", "0:v", "-map", "[aout]",
+            "-vf", vf_final, 
+            "-map", "0:v", "-map", "1:a", # <-- ¡CORRECCIÓN! Mapeamos el audio original procesado
             "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-maxrate", "40M", "-bufsize", "80M", "-r", "30", "-pix_fmt", "yuv420p",
-            "-threads", "6", # <-- REPITES LA MAGIA AQUÍ
+            "-threads", "6", 
             "-c:a", "aac", "-b:a", "192k", "-shortest", str(video_final)
         ]
         
